@@ -10,12 +10,18 @@ from torch.optim.lr_scheduler import StepLR
 import os
 from model import Net
 
+from model import MutualInfo
+
 def train(args, model, device, train_loader, optimizer, epoch):
+    model, mi = model
     model.train()
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
         optimizer.zero_grad()
         output = model(data)
+
+        mi.calculate_mi(model.layer_activations[0], model.layer_activations[-1], model.layer_activations[1])
+
         loss = F.nll_loss(output, target)
         loss.backward()
         optimizer.step()
@@ -104,6 +110,8 @@ def main():
     test_loader = torch.utils.data.DataLoader(dataset2, **test_kwargs)
 
     model = Net().to(device)
+    mi = MutualInfo()
+
     optimizer = optim.Adadelta(model.parameters(), lr=args.lr)
 
     if not os.path.isdir("models"):
@@ -112,7 +120,7 @@ def main():
     CORRECT = 0
     scheduler = StepLR(optimizer, step_size=1, gamma=args.gamma)
     for epoch in range(1, args.epochs + 1):
-        train(args, model, device, train_loader, optimizer, epoch)
+        train(args, [model, mi], device, train_loader, optimizer, epoch)
         correct = test(model, device, test_loader)
         scheduler.step()
         
