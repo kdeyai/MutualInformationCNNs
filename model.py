@@ -47,7 +47,7 @@ class Net(nn.Module):
         self.layer_activations.append(x)
 
         output = F.log_softmax(x, dim=1)
- 
+        
         self.layer_activations.append(output)
 
         return output
@@ -59,10 +59,13 @@ class MutualInfo(Net):
         self.n_bins = n_bins
         #self.layer_map = ["conv", "conv", "dropout", "fc", "dropout", "fc", "ypred"]
 
-    def bin(self, x, c):
+    def bin(self, unique_values, unique_counts):
+        
+        print (unique_values.shape, unique_counts.shape)
+
         # n_bins bins = n_bins + 1 ranges; precision = 6 decimal places for float32 and arange
-        bin_size = (max(x) - min(x)) / float(self.n_bins + 1)
-        bins = np.arange(min(x), max(x) + bin_size/2., bin_size) 
+        bin_size = (max(unique_values) - min(unique_values)) / float(self.n_bins + 1)
+        bins = np.arange(min(unique_values), max(unique_values) + bin_size/2., bin_size) 
         bins = np.round(bins[1:], decimals=6)
         
         binned_data = {}
@@ -70,34 +73,41 @@ class MutualInfo(Net):
 
         bin_idx = 0        
         
-        for unique_x, x_count in zip(x, c):
-            if bins[bin_idx] >= unique_x:
-                if bin_idx in binned_data:
-                    binned_data[bin_idx].append([unique_x, x_count])
-                else:
-                    binned_data[bin_idx] = [[unique_x, x_count]]
-            else:
+        for unique_a, a_count in zip(unique_values, unique_counts):
+            if bins[bin_idx] < unique_a:
                 if not bin_idx in binned_data:
                     binned_data[bin_idx] = [[np.nan,0]]
-                bin_idx += 1               
+                bin_idx += 1
+            else:
+                if bin_idx in binned_data:
+                    binned_data[bin_idx].append([unique_a, a_count])
+                else:
+                    binned_data[bin_idx] = [[unique_a, a_count]]
         
+        for bin_idx in range(self.n_bins):
+            if bin_idx not in binned_data:
+                binned_data[bin_idx] = [[np.nan, 0]]
+
         for bin_idx in range(self.n_bins):
             probs[bin_idx] = np.sum(np.array(binned_data[bin_idx])[:,1])
         probs = np.array(probs) 
         probs /= float(probs.sum())
         
+        print (unique_values.shape, unique_counts.shape, probs)
+
     def calculate_mi(self, x, f, y):
 
         x, f, y = x.cpu().numpy(), f.cpu().detach().numpy(), y.cpu().detach().numpy()
         
         unique_x, counts_x = np.unique(x, return_counts=True)        
         p_x = counts_x / counts_x.sum()
-        unique_y, counts_y = np.unique(y, return_counts=True)        
-        p_y = counts_y / counts_y.sum()
         unique_f, counts_f = np.unique(f, return_counts=True)        
         p_f = counts_f / counts_f.sum()
+
+        unique_y, counts_y = np.unique(y, return_counts=True)        
+        p_y = counts_y / counts_y.sum()
         
-        #self.bin(unique_x, counts_x)
+        self.bin(unique_x, counts_x)
         self.bin(unique_f, counts_f)
         self.bin(unique_y, counts_y)
         exit()      
@@ -109,5 +119,6 @@ if __name__ == "__main__":
     x = torch.ones((1,1,28,28))
     mi.forward(x)
     
+    print ('shape', mi.layer_activations[-1].shape)
     mi.calculate_mi(mi.layer_activations[0], mi.layer_activations[1], mi.layer_activations[-1]) 
 
