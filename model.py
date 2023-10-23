@@ -1,8 +1,8 @@
-import numpy as np
-
 import torch
 from torch import nn 
 from torch.nn import functional as F
+from collections import defaultdict
+
 
 class Net(nn.Module):
     def __init__(self):
@@ -14,111 +14,58 @@ class Net(nn.Module):
         self.fc1 = nn.Linear(9216, 128)
         self.fc2 = nn.Linear(128, 10)
 
-        self.layer_activations = []
+        self.layer_activations = defaultdict(list)
+        self.input_data = []
+        self.len = 0
 
     def forward(self, x):
-        
-        self.layer_activations.append(x)        
-
+        y = x
+        self.input_data.append(x)
         x = self.conv1(x)
         x = F.relu(x)
 
-        self.layer_activations.append(x)
+        self.layer_activations[y].append(x)
 
         x = self.conv2(x)
         x = F.relu(x)
  
-        self.layer_activations.append(x)
+        self.layer_activations[y].append(x)
 
         x = F.max_pool2d(x, 2)
         x = self.dropout1(x)
  
-        self.layer_activations.append(x)
+        self.layer_activations[y].append(x)
 
         x = torch.flatten(x, 1)
         x = self.fc1(x)
         x = F.relu(x)
  
-        self.layer_activations.append(x)
+        self.layer_activations[y].append(x)
 
         x = self.dropout2(x)
         x = self.fc2(x)
  
-        self.layer_activations.append(x)
+        self.layer_activations[y].append(x)
 
         output = F.log_softmax(x, dim=1)
-        
-        self.layer_activations.append(output)
+ 
+        self.layer_activations[y].append(x)
 
+        self.len = len(self.layer_activations[y])
         return output
 
 class MutualInfo(Net):
-    def __init__(self, n_bins=40):
-        super().__init__()        
+    def __init__(self):
+        super().__init__()
         
-        self.n_bins = n_bins
-        #self.layer_map = ["conv", "conv", "dropout", "fc", "dropout", "fc", "ypred"]
+        self.layer_map = ["conv", "conv", "dropout", "fc", "dropout", "fc", "ypred"]
+        
+        x = torch.ones((1,1,28,28))
+        self.forward(x)
 
-    def bin(self, unique_values, unique_counts):
-        
-        print (unique_values.shape, unique_counts.shape)
-
-        # n_bins bins = n_bins + 1 ranges; precision = 6 decimal places for float32 and arange
-        bin_size = (max(unique_values) - min(unique_values)) / float(self.n_bins + 1)
-        bins = np.arange(min(unique_values), max(unique_values) + bin_size/2., bin_size) 
-        bins = np.round(bins[1:], decimals=6)
-        
-        binned_data = {}
-        probs = [0 for _ in range(self.n_bins)]
-
-        bin_idx = 0        
-        
-        for unique_a, a_count in zip(unique_values, unique_counts):
-            if bins[bin_idx] < unique_a:
-                if not bin_idx in binned_data:
-                    binned_data[bin_idx] = [[np.nan,0]]
-                bin_idx += 1
-            else:
-                if bin_idx in binned_data:
-                    binned_data[bin_idx].append([unique_a, a_count])
-                else:
-                    binned_data[bin_idx] = [[unique_a, a_count]]
-        
-        for bin_idx in range(self.n_bins):
-            if bin_idx not in binned_data:
-                binned_data[bin_idx] = [[np.nan, 0]]
-
-        for bin_idx in range(self.n_bins):
-            probs[bin_idx] = np.sum(np.array(binned_data[bin_idx])[:,1])
-        probs = np.array(probs) 
-        probs /= float(probs.sum())
-        
-        print (unique_values.shape, unique_counts.shape, probs)
-
-    def calculate_mi(self, x, f, y):
-
-        x, f, y = x.cpu().numpy(), f.cpu().detach().numpy(), y.cpu().detach().numpy()
-        
-        unique_x, counts_x = np.unique(x, return_counts=True)        
-        p_x = counts_x / counts_x.sum()
-        unique_f, counts_f = np.unique(f, return_counts=True)        
-        p_f = counts_f / counts_f.sum()
-
-        unique_y, counts_y = np.unique(y, return_counts=True)        
-        p_y = counts_y / counts_y.sum()
-        
-        self.bin(unique_x, counts_x)
-        self.bin(unique_f, counts_f)
-        self.bin(unique_y, counts_y)
-        exit()      
+        print ([x.shape for x in self.layer_activations])
 
 if __name__ == "__main__":
 
     mi = MutualInfo()
-        
-    x = torch.ones((1,1,28,28))
-    mi.forward(x)
-    
-    print ('shape', mi.layer_activations[-1].shape)
-    mi.calculate_mi(mi.layer_activations[0], mi.layer_activations[1], mi.layer_activations[-1]) 
 
