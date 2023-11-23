@@ -14,20 +14,19 @@ def bin_calc_information2(inputdata,labelixs, layerdata, binsize):
         p_ts, _ = get_unique_probs( digitized )
         return -np.sum(p_ts * np.log(p_ts))
 
-    print(layerdata.size())
     H_LAYER = get_h(layerdata)
 
     H_LAYER_GIVEN_OUTPUT = 0
     
     temp = []
     for label, ixs in labelixs.items():
-        H_LAYER_GIVEN_OUTPUT += ixs.mean() * get_h(layerdata[ixs,:]) #ixs.mean()为p_i
+        H_LAYER_GIVEN_OUTPUT += ixs.sum().div(len(ixs)) * get_h(layerdata[ixs,:]) #ixs.mean()为p_i
 
     H_LAYER_GIVEN_INPUT = 0.
     
-    p_xs, unique_inverse_x = get_unique_probs(inputdata)
+    p_xs, unique_inverse_x = get_unique_probs(inputdata.cpu().detach().numpy())
 
-    digitized = np.floor(layerdata / binsize).astype('int')
+    digitized = np.floor(layerdata.cpu().detach().numpy() / binsize).astype('int')
 
 
     for xval in unique_inverse_x:

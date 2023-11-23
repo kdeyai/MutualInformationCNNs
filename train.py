@@ -10,10 +10,13 @@ import numpy as np
 import simplebin
 from collections import defaultdict, OrderedDict
 import informationplane as ip
-
+import torch.utils.data as data_utils
+import kde
+import pickle
 
 import os
 from model import Net
+
 
 def train(args, model, device, train_loader, optimizer, epoch):
     model.train()
@@ -56,10 +59,8 @@ def findactivity(model, index):
 
     input = model.input_data
     activity = []
-    print(len(input), input[0].size())
     for i in input:
-        print(model.layer_activations[i][index].size())
-        activity.append(model.layer_activations[i][index].flatten())  
+        activity.append(torch.flatten(model.layer_activations[i][index],start_dim = 1, end_dim = -1))  
     return torch.cat(activity)    #need to concat batches
     
 
@@ -67,13 +68,13 @@ def findactivity(model, index):
 def main():
     # Training settings
     parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
-    parser.add_argument('--batch-size', type=int, default=64, metavar='N',
+    parser.add_argument('--batch-size', type=int, default=16, metavar='N',
                         help='input batch size for training (default: 64)')
     parser.add_argument('--test-batch-size', type=int, default=1000, metavar='N',
                         help='input batch size for testing (default: 1000)')
-    parser.add_argument('--epochs', type=int, default=14, metavar='N',
+    parser.add_argument('--epochs', type=int, default=20, metavar='N',
                         help='number of epochs to train (default: 14)')
-    parser.add_argument('--lr', type=float, default=1.0, metavar='LR',
+    parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
                         help='learning rate (default: 1.0)')
     parser.add_argument('--gamma', type=float, default=0.7, metavar='M',
                         help='Learning rate step gamma (default: 0.7)')
@@ -111,54 +112,97 @@ def main():
 
     transform=transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize((0.1307,), (0.3081,))
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225])
         ])
-    dataset1 = datasets.MNIST('../data', train=True, download=True,
+    indices = torch.arange(20000)
+    dataset1 = datasets.CIFAR10('../data', train=True, download=True,
                        transform=transform)
-    dataset2 = datasets.MNIST('../data', train=False,
+    index_sub = np.random.choice(np.arange(len(dataset1)), 20000, replace=False)
+    dataset1.data = dataset1.data[index_sub]
+    dataset1.targets = torch.tensor(dataset1.targets)[index_sub]
+
+    dataset2 = datasets.CIFAR10('../data', train=False,
                        transform=transform)
     train_loader = torch.utils.data.DataLoader(dataset1,**train_kwargs)
     test_loader = torch.utils.data.DataLoader(dataset2, **test_kwargs)
 
     saved_labelixs = {}
     for i in range(10):
-        saved_labelixs[i] = np.squeeze(dataset1.targets == i)
+        saved_labelixs[i] = np.squeeze(torch.tensor(dataset1.targets) == i)
 
     model = Net().to(device)
-    optimizer = optim.Adadelta(model.parameters(), lr=args.lr)
+    optimizer = optim.SGD(model.parameters(), lr=args.lr)
 
     if not os.path.isdir("models"):
         os.mkdir("models")
     
     CORRECT = 0
     nats2bits = 1.0/np.log(2) 
-    scheduler = StepLR(optimizer, step_size=1, gamma=args.gamma)
+    scheduler = StepLR(optimizer, step_size=2, gamma=args.gamma)
     # MI_client = MI(X_train_subset, y_train_subset, 10)
     # MI_client.discretize()
     # MI_client.pre_compute()
     measures = OrderedDict()
     activation = 'relu'
     measures[activation] = {}
+    y = F.one_hot(dataset1.targets, num_classes=10).detach().cpu().numpy()
+    
+    labelprobs = np.mean(y, axis=0)
+    noise_variance = 1e-1 
+
+   
     for epoch in range(1, args.epochs + 1):
         train(args, model, device, train_loader, optimizer, epoch)
         cepochdata = defaultdict(list)
         PLOT_LAYERS =[] 
+        input_act = []
+        for i in model.input_data:
+            input_act.append(torch.flatten(i,start_dim =1, end_dim =-1))
+ 
+        in_act = torch.cat(input_act)
         for i in range(model.len):
             PLOT_LAYERS.append(i)   #this will plot for all layers
             activity = findactivity(model,i)
-            binHM,binXM,binX_M, binYM,binY_M = simplebin.bin_calc_information2(model.input_data,saved_labelixs, activity, 0.67)   #calculating mutual information
+            h_upper = kde.entropy_estimator_kl(activity, noise_variance)
+            h_lower = kde.entropy_estimator_bd(activity, noise_variance)
+            hM_given_X = kde.kde_condentropy(activity, noise_variance)
+            hM_given_Y_upper=0
+            for i in range(10):
+                hcond_upper = kde.entropy_estimator_kl(activity[saved_labelixs[i],:], noise_variance)
+                hM_given_Y_upper += labelprobs[i] * hcond_upper
+                
+            hM_given_Y_lower=0.
+            for i in range(10):
+                hcond_lower = kde.entropy_estimator_bd(activity[saved_labelixs[i],:], noise_variance)
+                hM_given_Y_lower += labelprobs[i] * hcond_lower
+
+            binHM,binXM,binX_M, binYM,binY_M = simplebin.bin_calc_information2(in_act,saved_labelixs, activity, 0.67)   #calculating mutual information
             cepochdata['MI_XM_bin'].append( nats2bits * binXM )
             cepochdata['MI_YM_bin'].append( nats2bits * binYM )
             cepochdata['H_M_bin'].append(nats2bits * binHM)
+
+            cepochdata['MI_XM_upper'].append( nats2bits * (h_upper - hM_given_X) )
+            cepochdata['MI_YM_upper'].append( nats2bits * (h_upper - hM_given_Y_upper) )
+            cepochdata['H_M_upper'  ].append( nats2bits * h_upper )
+
+            cepochdata['MI_XM_lower'].append( nats2bits * (h_lower - hM_given_X) )
+            cepochdata['MI_YM_lower'].append( nats2bits * (h_lower - hM_given_Y_lower) )
+            cepochdata['H_M_lower'  ].append( nats2bits * h_lower )
+
         correct = test(model, device, test_loader)
         scheduler.step()
         measures[activation][epoch] = cepochdata
-        ip.plotinformationplane(measures,PLOT_LAYERS)
+        model.input_data.clear()
+        model.layer_activations.clear()
         # MI_client.mi_single_epoch(hidden_layers, epoch)
         
         torch.save(model.state_dict(), "models/mnist_cnn_%d.pt" % epoch)
         if correct > CORRECT:
             torch.save(model.state_dict(), "models/mnist_cnn_best.pt")
+    ip.plotinformationplane(measures,PLOT_LAYERS)
+    # with open('objs.pkl', 'w') as f:  
+    #       pickle.dump([measures,PLOT_LAYERS], f)
 
 if __name__ == '__main__':
     main()

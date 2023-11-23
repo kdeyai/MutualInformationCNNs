@@ -1,6 +1,7 @@
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 # matplotlib.rcParams.update({'font.size': 14})
 # figsize = (8, 5)
 
@@ -55,6 +56,7 @@ sns.set_style('darkgrid')
 
 
 def plotinformationplane(measures,PLOT_LAYERS):
+
     plt.figure(figsize=(4,8))
     gs = gridspec.GridSpec(2,len(measures))
     for activation, vals in measures.items():
@@ -86,3 +88,41 @@ def plotinformationplane(measures,PLOT_LAYERS):
     plt.tight_layout()
 
     plt.savefig('./',bbox_inches='tight')
+
+
+
+    max_epoch = max( (max(vals.keys()) if len(vals) else 0) for vals in measures.values())
+    sm = plt.cm.ScalarMappable(cmap='gnuplot', norm=plt.Normalize(vmin=0, vmax=500))
+    sm._A = []
+    infoplane_measures = ['bin', 'upper', 'lower']
+    for infoplane_measure in infoplane_measures:
+        fig=plt.figure(figsize=(10,5))
+        count = 0
+        for actndx, (activation, vals) in enumerate(measures.items()):
+            epochs = sorted(vals.keys())
+            if not len(epochs):
+                continue
+            plt.subplot(1,2,actndx+1)    
+            for epoch in epochs:
+                c = sm.to_rgba(epoch)
+                xmvals = np.array(vals[epoch]['MI_XM_'+infoplane_measure])[PLOT_LAYERS]
+                ymvals = np.array(vals[epoch]['MI_YM_'+infoplane_measure])[PLOT_LAYERS]
+
+                # s = np.argsort(xmvals)
+                # xmvals = xmvals[s]
+                # ymvals = ymvals[s]
+                plt.plot(xmvals, ymvals, c=c, alpha=0.1, zorder=1)
+                plt.scatter(xmvals, ymvals, s=20, facecolors=[c for _ in PLOT_LAYERS], edgecolor='none', zorder=2)
+            
+
+            plt.xlabel('I(X;M)')
+            plt.ylabel('I(Y;M)')
+            plt.title(activation)
+            
+        cbaxes = fig.add_axes([1.0, 0.125, 0.03, 0.8]) 
+        plt.colorbar(sm, label='Epoch', cax=cbaxes)
+        plt.tight_layout()
+
+        if not os.path.isdir('plots'):
+            os.mkdir('plots')
+        plt.savefig('plots/' + 'relu'+ '_infoplane_'+infoplane_measure,bbox_inches='tight')
